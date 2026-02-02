@@ -1,6 +1,15 @@
 node_modules/
 dist/
-*.node
-*.o
 build/
 .build/
+
+# Swift compile artifacts
+src/native/*.o
+src/native/*.swiftmodule
+src/native/*.swiftdoc
+src/native/*.swiftsourceinfo
+src/native/*.abi.json
+src/native/*-Swift.h
+
+# Local build output (not prebuilt packages)
+src/native/build/
