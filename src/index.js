@@ -41,38 +41,76 @@ function loadNative() {
  */
 function isAvailable() {
     const mod = loadNative();
-    if (!mod) {
+    if (!mod || !mod.isAvailable) {
         return false;
     }
     return mod.isAvailable();
 }
 
 /**
- * Transcribe an audio file using Apple Speech Framework
- * @param {string} filePath - Path to audio file (WAV format)
- * @param {string} [locale='zh-CN'] - Locale for speech recognition
- * @param {number} [timeoutSeconds=60] - Timeout in seconds
- * @returns {{success: boolean, text: string, error?: string}}
+ * Create a new streaming speech recognition session
+ * @param {string} locale - Locale for speech recognition
+ * @param {(text: string, isFinal: boolean) => void} onResult - Result callback
+ * @param {(error: string) => void} onError - Error callback
+ * @returns {Session | null}
  */
-function transcribeFile(filePath, locale = 'zh-CN', timeoutSeconds = 60) {
+function createSession(locale, onResult, onError) {
     const mod = loadNative();
-    if (!mod) {
-        return { success: false, text: '', error: 'Apple Speech is only available on macOS' };
+    if (!mod || !mod.createSession) {
+        return null;
     }
 
-    const result = mod.transcribeFile(filePath, locale, timeoutSeconds);
-    if (!result) {
-        return { success: false, text: '', error: 'Transcription failed' };
+    // Pass locale as-is; empty string or null = system default
+    const sessionId = mod.createSession(
+        locale || '',
+        (id, text, isFinal) => {
+            if (onResult) {
+                onResult(text, isFinal);
+            }
+        },
+        (id, error) => {
+            if (onError) {
+                onError(error);
+            }
+        }
+    );
+
+    if (sessionId < 0) {
+        return null;
     }
 
-    try {
-        return JSON.parse(result);
-    } catch {
-        return { success: false, text: '', error: 'Failed to parse result' };
-    }
+    // Return Session object
+    return {
+        sessionId,
+        
+        appendAudio(pcm16Buffer) {
+            if (!mod.appendAudio) {
+                return false;
+            }
+            return mod.appendAudio(sessionId, pcm16Buffer);
+        },
+        
+        end() {
+            if (mod.endSession) {
+                mod.endSession(sessionId);
+            }
+        },
+        
+        cancel() {
+            if (mod.cancelSession) {
+                mod.cancelSession(sessionId);
+            }
+        },
+        
+        dispose() {
+            if (mod.disposeSession) {
+                mod.disposeSession(sessionId);
+            }
+        }
+    };
 }
 
 module.exports = {
     isAvailable,
-    transcribeFile
+    createSession
 };

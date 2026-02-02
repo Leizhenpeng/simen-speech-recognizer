@@ -26,7 +26,8 @@
           "xcode_settings": {
             "OTHER_LDFLAGS": [
               "-framework", "Speech",
-              "-framework", "Foundation"
+              "-framework", "Foundation",
+              "-framework", "AVFoundation"
             ]
           }
         }]

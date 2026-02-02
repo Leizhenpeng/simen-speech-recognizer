@@ -5,110 +5,107 @@
 
 import Foundation
 import Speech
+import AVFoundation
 
-// MARK: - Result Structure
+// MARK: - Session Class
 
-struct TranscriptionResult: Codable {
-    let success: Bool
-    let text: String
-    let error: String?
-}
-
-// MARK: - Internal Helpers
-
-private func encodeResult(_ result: TranscriptionResult) -> String {
-    let encoder = JSONEncoder()
-    guard let data = try? encoder.encode(result),
-          let json = String(data: data, encoding: .utf8) else {
-        return "{\"success\":false,\"text\":\"\",\"error\":\"JSON encoding failed\"}"
+class AppleSpeechSession {
+    private let speechRecognizer: SFSpeechRecognizer
+    private let request: SFSpeechAudioBufferRecognitionRequest
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private let audioFormat: AVAudioFormat
+    
+    var onResult: ((String, Bool) -> Void)?
+    var onError: ((String) -> Void)?
+    
+    init?(locale: String?) {
+        // Use system default if locale is nil or empty
+        let recognizer: SFSpeechRecognizer?
+        if let loc = locale, !loc.isEmpty {
+            recognizer = SFSpeechRecognizer(locale: Locale(identifier: loc))
+        } else {
+            recognizer = SFSpeechRecognizer()  // System default, auto language detection
+        }
+        
+        guard let recognizer = recognizer, recognizer.isAvailable else {
+            return nil
+        }
+        
+        self.speechRecognizer = recognizer
+        self.request = SFSpeechAudioBufferRecognitionRequest()
+        self.request.shouldReportPartialResults = true
+        self.request.taskHint = .dictation
+        
+        // 16kHz mono Int16 PCM format
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16000,
+            channels: 1,
+            interleaved: true
+        ) else {
+            return nil
+        }
+        self.audioFormat = format
     }
-    return json
-}
-
-private func errorResult(_ message: String) -> String {
-    return encodeResult(TranscriptionResult(success: false, text: "", error: message))
-}
-
-private func successResult(_ text: String) -> String {
-    return encodeResult(TranscriptionResult(success: true, text: text, error: nil))
-}
-
-// MARK: - Synchronous Transcription
-
-private func transcribeSync(fileURL: URL, locale: String, timeoutSeconds: Double) -> String {
-    guard let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else {
-        return errorResult("Failed to create speech recognizer for locale: \(locale)")
+    
+    func start() {
+        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                self.onError?(error.localizedDescription)
+                return
+            }
+            
+            if let result = result {
+                let text = result.bestTranscription.formattedString
+                self.onResult?(text, result.isFinal)
+            }
+        }
     }
-
-    guard speechRecognizer.isAvailable else {
-        return errorResult("Speech recognizer is not available")
-    }
-
-    let request = SFSpeechURLRecognitionRequest(url: fileURL)
-    request.shouldReportPartialResults = false
-    request.taskHint = .dictation
-    request.requiresOnDeviceRecognition = false
-
-    let semaphore = DispatchSemaphore(value: 0)
-    var resultText: String = ""
-    var resultError: String? = nil
-
-    speechRecognizer.recognitionTask(with: request) { result, error in
-        if let error = error {
-            resultError = error.localizedDescription
-            semaphore.signal()
+    
+    func appendAudio(_ pcmData: Data) {
+        let frameCount = pcmData.count / 2  // Int16 = 2 bytes per sample
+        guard frameCount > 0 else { return }
+        
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(frameCount)) else {
             return
         }
-        if let result = result, result.isFinal {
-            resultText = result.bestTranscription.formattedString
-            semaphore.signal()
+        
+        buffer.frameLength = AVAudioFrameCount(frameCount)
+        
+        pcmData.withUnsafeBytes { rawPtr in
+            guard let int16Ptr = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self),
+                  let channelData = buffer.int16ChannelData else {
+                return
+            }
+            channelData[0].update(from: int16Ptr, count: frameCount)
         }
+        
+        request.append(buffer)
     }
-
-    let timeout = DispatchTime.now() + timeoutSeconds
-    if semaphore.wait(timeout: timeout) == .timedOut {
-        return errorResult("Transcription timed out")
+    
+    func endAudio() {
+        request.endAudio()
     }
-
-    if let error = resultError {
-        return errorResult(error)
+    
+    func cancel() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
     }
-
-    return successResult(resultText)
 }
+
+// MARK: - Session Manager
+
+private var sessions: [Int: AppleSpeechSession] = [:]
+private var nextSessionId: Int = 1
+private let sessionLock = NSLock()
+
+// Store callbacks globally (C function pointers)
+private var resultCallbacks: [Int: (Int, UnsafePointer<CChar>, Bool) -> Void] = [:]
+private var errorCallbacks: [Int: (Int, UnsafePointer<CChar>) -> Void] = [:]
 
 // MARK: - C Interface
-
-@_cdecl("appleSpeechTranscribeFile")
-public func appleSpeechTranscribeFile(
-    _ filePath: UnsafePointer<CChar>?,
-    _ locale: UnsafePointer<CChar>?,
-    _ timeoutSeconds: Double
-) -> UnsafeMutablePointer<CChar>? {
-    guard let filePath = filePath else {
-        return strdup(errorResult("File path is nil"))
-    }
-
-    let path = String(cString: filePath)
-    let loc = locale != nil ? String(cString: locale!) : "zh-CN"
-    let timeout = timeoutSeconds > 0 ? timeoutSeconds : 60.0
-
-    let fileURL = URL(fileURLWithPath: path)
-
-    guard FileManager.default.fileExists(atPath: path) else {
-        return strdup(errorResult("File not found: \(path)"))
-    }
-
-    let result = transcribeSync(fileURL: fileURL, locale: loc, timeoutSeconds: timeout)
-    return strdup(result)
-}
-
-@_cdecl("appleSpeechFreeString")
-public func appleSpeechFreeString(_ ptr: UnsafeMutablePointer<CChar>?) {
-    if let ptr = ptr {
-        free(ptr)
-    }
-}
 
 @_cdecl("appleSpeechIsAvailable")
 public func appleSpeechIsAvailable() -> Bool {
@@ -116,4 +113,98 @@ public func appleSpeechIsAvailable() -> Bool {
         return false
     }
     return recognizer.isAvailable
+}
+
+@_cdecl("appleSpeechCreateSession")
+public func appleSpeechCreateSession(
+    _ locale: UnsafePointer<CChar>?,
+    _ onResult: @escaping @convention(c) (Int, UnsafePointer<CChar>, Bool) -> Void,
+    _ onError: @escaping @convention(c) (Int, UnsafePointer<CChar>) -> Void
+) -> Int {
+    // Pass nil for system default, or specific locale string
+    let loc: String? = locale != nil ? String(cString: locale!) : nil
+    
+    guard let session = AppleSpeechSession(locale: loc) else {
+        return -1
+    }
+    
+    sessionLock.lock()
+    let sessionId = nextSessionId
+    nextSessionId += 1
+    sessions[sessionId] = session
+    resultCallbacks[sessionId] = onResult
+    errorCallbacks[sessionId] = onError
+    sessionLock.unlock()
+    
+    session.onResult = { text, isFinal in
+        text.withCString { cStr in
+            onResult(sessionId, cStr, isFinal)
+        }
+    }
+    
+    session.onError = { error in
+        error.withCString { cStr in
+            onError(sessionId, cStr)
+        }
+    }
+    
+    session.start()
+    return sessionId
+}
+
+@_cdecl("appleSpeechAppendAudio")
+public func appleSpeechAppendAudio(
+    _ sessionId: Int,
+    _ data: UnsafePointer<UInt8>?,
+    _ length: Int
+) -> Bool {
+    guard let data = data, length > 0 else {
+        return false
+    }
+    
+    sessionLock.lock()
+    guard let session = sessions[sessionId] else {
+        sessionLock.unlock()
+        return false
+    }
+    sessionLock.unlock()
+    
+    let pcmData = Data(bytes: data, count: length)
+    session.appendAudio(pcmData)
+    return true
+}
+
+@_cdecl("appleSpeechEndSession")
+public func appleSpeechEndSession(_ sessionId: Int) {
+    sessionLock.lock()
+    guard let session = sessions[sessionId] else {
+        sessionLock.unlock()
+        return
+    }
+    sessionLock.unlock()
+    
+    session.endAudio()
+}
+
+@_cdecl("appleSpeechCancelSession")
+public func appleSpeechCancelSession(_ sessionId: Int) {
+    sessionLock.lock()
+    guard let session = sessions[sessionId] else {
+        sessionLock.unlock()
+        return
+    }
+    sessionLock.unlock()
+    
+    session.cancel()
+}
+
+@_cdecl("appleSpeechDisposeSession")
+public func appleSpeechDisposeSession(_ sessionId: Int) {
+    sessionLock.lock()
+    if let session = sessions.removeValue(forKey: sessionId) {
+        session.cancel()
+    }
+    resultCallbacks.removeValue(forKey: sessionId)
+    errorCallbacks.removeValue(forKey: sessionId)
+    sessionLock.unlock()
 }
