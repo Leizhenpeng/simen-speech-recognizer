@@ -1,0 +1,46 @@
+{
+  "name": "simen-speech-recognizer",
+  "version": "0.1.0",
+  "description": "Apple Speech Framework native binding for Node.js",
+  "license": "MIT",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "files": [
+    "src/**/*.js",
+    "src/**/*.d.ts"
+  ],
+  "scripts": {
+    "build:swift": "cd src/native && MACOSX_DEPLOYMENT_TARGET=13.0 swiftc -O -parse-as-library -c AppleSpeech.swift -o AppleSpeech.o",
+    "build:native": "npm run build:swift && node-gyp rebuild --directory=src/native",
+    "prebuild": "node scripts/prebuild-current.js",
+    "prebuild:mac": "npm run build:swift && cd src/native && npm install && npx node-gyp rebuild && cd ../.. && node scripts/copy-native.js darwin-arm64",
+    "copy-native": "node scripts/copy-native.js",
+    "publish:all": "node scripts/publish.js"
+  },
+  "keywords": [
+    "speech",
+    "recognition",
+    "asr",
+    "native",
+    "addon",
+    "macos",
+    "apple"
+  ],
+  "author": "Simen",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Leizhenpeng/simen-speech-recognizer.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  },
+  "optionalDependencies": {
+    "@simen-speech-recognizer/darwin-arm64": "0.1.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  }
+}

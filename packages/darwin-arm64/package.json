@@ -1,0 +1,32 @@
+{
+  "name": "@simen-speech-recognizer/darwin-arm64",
+  "version": "0.1.0",
+  "description": "Apple Speech native binding for macOS ARM64",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "simen_speech_recognizer.node",
+  "files": [
+    "simen_speech_recognizer.node"
+  ],
+  "keywords": [
+    "speech",
+    "recognition",
+    "native",
+    "addon",
+    "macos",
+    "arm64"
+  ],
+  "author": "Simen",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Leizhenpeng/simen-speech-recognizer.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
