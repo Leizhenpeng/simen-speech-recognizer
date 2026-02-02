@@ -1,6 +1,6 @@
 {
   "name": "simen-speech-recognizer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Apple Speech Framework native binding for Node.js",
   "license": "MIT",
   "main": "./src/index.js",
@@ -38,7 +38,7 @@
     "node-addon-api": "^8.0.0"
   },
   "optionalDependencies": {
-    "@simen-speech-recognizer/darwin-arm64": "0.1.0"
+    "@simen-speech-recognizer/darwin-arm64": "0.2.0"
   },
   "devDependencies": {
     "node-gyp": "^10.0.0"
